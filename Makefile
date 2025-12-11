@@ -10,5 +10,4 @@ test:
 	pytest tests/
 
 enqueue:
-	# TODO: Implement a script or curl command to enqueue a job
-	@echo "Enqueue task not implemented yet."
+	python -m youtube_factory.worker enqueue --topic "$(TOPIC)" --niche "General" --length 480
