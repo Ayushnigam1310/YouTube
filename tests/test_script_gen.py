@@ -1,41 +1,80 @@
-# tests/test_script_gen.py
-import json
 import pytest
-from youtube_factory.tasks import script_gen
+import json
+from unittest.mock import MagicMock
+from youtube_factory.tasks.script_gen import generate_script
 
-class DummyLLM:
-    def __init__(self, response_text: str):
-        self.response_text = response_text
-    def __call__(self, prompt: str):
-        return self.response_text
+# Mock object structure for OpenAI response
+class MockMessage:
+    def __init__(self, content):
+        self.content = content
 
-def test_generate_script_success(tmp_path, monkeypatch):
-    # Prepare a valid JSON response
-    resp = {
-        "title": "How to Save Money Fast",
-        "hook": "In 10 seconds I'll show you 3 quick ways to save today",
+class MockChoice:
+    def __init__(self, content):
+        self.message = MockMessage(content)
+
+class MockResponse:
+    def __init__(self, content):
+        self.choices = [MockChoice(content)]
+
+@pytest.fixture
+def mock_llm_client():
+    client = MagicMock()
+    return client
+
+def test_generate_script_success(mock_llm_client):
+    # Prepare valid JSON response
+    valid_response = {
+        "title": "How to Code",
+        "hook": "Learn coding in 10 seconds.",
         "sections": [
-            {"heading": "Cut subscriptions", "body": "Cancel unused subs, e.g., audit your bank statement", "b_roll": "screenshot of bank app"},
-            {"heading": "Meal prep", "body": "Save by cooking at home; example: plan 5 lunches", "b_roll":"cooking time-lapse"}
+            {"heading": "Intro", "body": "Just start typing. Example: print('hello')", "b_roll": "typing"}
         ],
-        "cta": "Like, subscribe, get the free checklist",
-        "tags": ["finance","saving","money"],
-        "shorts": ["Tip 1: cut subscriptions", "Tip 2: meal prep"]
+        "cta": "Subscribe",
+        "tags": ["coding", "python"],
+        "shorts": ["clip1", "clip2"]
     }
-    dummy = DummyLLM(json.dumps(resp))
-    out = script_gen.generate_script("save money", llm_client=dummy)
-    assert out["title"] == resp["title"]
-    assert isinstance(out["sections"], list)
-    assert len(out["sections"]) == 2
+    
+    mock_llm_client.chat.completions.create.return_value = MockResponse(json.dumps(valid_response))
+    
+    result = generate_script("coding", llm_client=mock_llm_client)
+    
+    assert result["title"] == "How to Code"
+    assert len(result["sections"]) == 1
+    assert result["tags"] == ["coding", "python"]
 
-def test_generate_script_content_not_allowed():
-    dummy = DummyLLM(json.dumps({"error":"content_not_allowed","reason":"illegal content"}))
+def test_generate_script_content_not_allowed(mock_llm_client):
+    # Prepare disallowed content response
+    error_response = {
+        "error": "content_not_allowed",
+        "reason": "Harmful content"
+    }
+    
+    mock_llm_client.chat.completions.create.return_value = MockResponse(json.dumps(error_response))
+    
     with pytest.raises(ValueError) as excinfo:
-        script_gen.generate_script("some illegal topic", llm_client=dummy)
+        generate_script("bomb making", llm_client=mock_llm_client)
+    
     assert "content_not_allowed" in str(excinfo.value)
 
-def test_generate_script_malformed_json():
-    # return not a JSON
-    dummy = DummyLLM("I am not JSON")
-    with pytest.raises(ValueError):
-        script_gen.generate_script("topic", llm_client=dummy)
+def test_generate_script_invalid_json(mock_llm_client):
+    # Prepare malformed JSON
+    mock_llm_client.chat.completions.create.return_value = MockResponse("{not valid json")
+    
+    with pytest.raises(ValueError) as excinfo:
+        generate_script("coding", llm_client=mock_llm_client)
+        
+    assert "invalid_response" in str(excinfo.value)
+
+def test_generate_script_missing_keys(mock_llm_client):
+    # Prepare JSON missing keys
+    incomplete_response = {
+        "title": "Incomplete"
+        # missing sections, etc.
+    }
+    
+    mock_llm_client.chat.completions.create.return_value = MockResponse(json.dumps(incomplete_response))
+    
+    with pytest.raises(ValueError) as excinfo:
+        generate_script("coding", llm_client=mock_llm_client)
+        
+    assert "invalid_response" in str(excinfo.value)
